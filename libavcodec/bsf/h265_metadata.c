@@ -24,8 +24,10 @@
 #include "cbs.h"
 #include "cbs_bsf.h"
 #include "cbs_h265.h"
+#include "cbs_sei.h"
 #include "h2645data.h"
 #include "h265_profile_level.h"
+#include "sei.h"
 
 #include "hevc/hevc.h"
 
@@ -65,6 +67,13 @@ typedef struct H265MetadataContext {
     int level;
     int level_guess;
     int level_warned;
+
+    // HDR metadata
+    const char *mastering_display_str;
+    int mastering_display_set;
+    SEIRawMasteringDisplayColourVolume mastering_display;
+    int content_light_level_set;
+    SEIRawContentLightLevelInfo content_light_level;
 } H265MetadataContext;
 
 
@@ -418,6 +427,28 @@ static int h265_metadata_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
     H265MetadataContext *ctx = bsf->priv_data;
     int err, i;
 
+    // Insert mastering display SEI if configured (prefix SEI, before VCL)
+    if (ctx->mastering_display_set) {
+        err = ff_cbs_sei_add_message(ctx->common.output, au, 1,
+                                     SEI_TYPE_MASTERING_DISPLAY_COLOUR_VOLUME,
+                                     &ctx->mastering_display, NULL);
+        if (err < 0) {
+            av_log(bsf, AV_LOG_ERROR, "Failed to add mastering display SEI.\n");
+            return err;
+        }
+    }
+
+    // Insert content light level SEI if configured
+    if (ctx->content_light_level_set) {
+        err = ff_cbs_sei_add_message(ctx->common.output, au, 1,
+                                     SEI_TYPE_CONTENT_LIGHT_LEVEL_INFO,
+                                     &ctx->content_light_level, NULL);
+        if (err < 0) {
+            av_log(bsf, AV_LOG_ERROR, "Failed to add content light level SEI.\n");
+            return err;
+        }
+    }
+
     // If an AUD is present, it must be the first NAL unit.
     if (au->nb_units && au->units[0].type == HEVC_NAL_AUD) {
         if (ctx->aud == BSF_ELEMENT_REMOVE)
@@ -489,6 +520,45 @@ static const CBSBSFType h265_metadata_type = {
 
 static int h265_metadata_init(AVBSFContext *bsf)
 {
+    H265MetadataContext *ctx = bsf->priv_data;
+
+    // Parse mastering display string if provided
+    if (ctx->mastering_display_str) {
+        SEIRawMasteringDisplayColourVolume *mdcv = &ctx->mastering_display;
+        int gx, gy, bx, by, rx, ry, wpx, wpy;
+        unsigned int max_lum, min_lum;
+
+        if (sscanf(ctx->mastering_display_str,
+                   "G(%d,%d)B(%d,%d)R(%d,%d)WP(%d,%d)L(%u,%u)",
+                   &gx, &gy, &bx, &by, &rx, &ry, &wpx, &wpy,
+                   &max_lum, &min_lum) != 10) {
+            av_log(bsf, AV_LOG_ERROR,
+                   "Invalid mastering_display format. Expected: "
+                   "G(Gx,Gy)B(Bx,By)R(Rx,Ry)WP(Wx,Wy)L(max,min)\n");
+            return AVERROR(EINVAL);
+        }
+
+        // HEVC uses G,B,R order (indices 0,1,2)
+        mdcv->display_primaries_x[0] = gx;
+        mdcv->display_primaries_y[0] = gy;
+        mdcv->display_primaries_x[1] = bx;
+        mdcv->display_primaries_y[1] = by;
+        mdcv->display_primaries_x[2] = rx;
+        mdcv->display_primaries_y[2] = ry;
+        mdcv->white_point_x = wpx;
+        mdcv->white_point_y = wpy;
+        mdcv->max_display_mastering_luminance = max_lum;
+        mdcv->min_display_mastering_luminance = min_lum;
+
+        ctx->mastering_display_set = 1;
+    }
+
+    // Check if content light level is set
+    if (ctx->content_light_level.max_content_light_level > 0 ||
+        ctx->content_light_level.max_pic_average_light_level > 0) {
+        ctx->content_light_level_set = 1;
+    }
+
     return ff_cbs_bsf_generic_init(bsf, &h265_metadata_type);
 }
 
@@ -573,6 +643,17 @@ static const AVOption h265_metadata_options[] = {
     { LEVEL("6.2", 186) },
     { LEVEL("8.5", 255) },
 #undef LEVEL
+
+    { "mastering_display", "Set mastering display metadata "
+        "(format: G(Gx,Gy)B(Bx,By)R(Rx,Ry)WP(Wx,Wy)L(max,min))",
+        OFFSET(mastering_display_str), AV_OPT_TYPE_STRING,
+        { .str = NULL }, .flags = FLAGS },
+    { "max_cll", "Set max content light level (cd/m^2)",
+        OFFSET(content_light_level.max_content_light_level), AV_OPT_TYPE_INT,
+        { .i64 = 0 }, 0, 65535, FLAGS },
+    { "max_fall", "Set max frame-average light level (cd/m^2)",
+        OFFSET(content_light_level.max_pic_average_light_level), AV_OPT_TYPE_INT,
+        { .i64 = 0 }, 0, 65535, FLAGS },
 
     { NULL }
 };
