@@ -1,5 +1,8 @@
 #!/bin/sh
 
+# Debug arguments
+echo "DEBUG makedef args: $@" >&2
+
 # Copyright (c) 2013, Derek Buitenhuis
 #
 # Permission to use, copy, modify, and/or distribute this software for any
@@ -33,6 +36,9 @@ if [ ! -f "$vscript" ]; then
 fi
 
 for object in "$@"; do
+    if [ "${object#@}" != "${object}" ]; then
+        continue
+    fi
     if [ ! -f "$object" ]; then
         echo "Object does not exist: ${object}" >&2
         exit 1
@@ -45,17 +51,34 @@ libname=$(mktemp -u "library").lib
 
 trap 'rm -f -- $libname' EXIT
 
+use_lib_exe=0
 if [ -n "$AR" ]; then
-    $AR rcs ${libname} $@ >/dev/null
+    case "$AR" in
+        *lib.exe|*lib)
+            use_lib_exe=1
+            ;;
+    esac
+fi
+
+if [ -n "$AR" ] && [ $use_lib_exe -eq 0 ]; then
+    echo "DEBUG: Executing $AR rcs ${libname} $@" >&2
+    $AR rcs ${libname} $@
 else
+    # AR is either unset or set to lib.exe
     machine_flag=""
     case "$LDFLAGS" in
     *"machine:arm64ec"*)
         machine_flag="-machine:arm64ec"
         ;;
     esac
-    lib.exe ${machine_flag} -out:${libname} $@ >/dev/null
+    
+    if [ -n "$AR" ]; then
+        $AR ${machine_flag} -out:${libname} $@
+    else
+        lib.exe ${machine_flag} -out:${libname} $@
+    fi
 fi
+
 if [ $? != 0 ]; then
     echo "Could not create temporary library." >&2
     exit 1

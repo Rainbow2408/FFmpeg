@@ -66,7 +66,7 @@ $(SUBDIR)lib$(NAME).version: $(SUBDIR)version.h $(SUBDIR)version_major.h | $(SUB
 	$$(M) $$(SRC_PATH)/ffbuild/libversion.sh $(NAME) $$^ > $$@
 
 $(SUBDIR)lib$(FULLNAME).pc: $(SUBDIR)version.h ffbuild/config.sh | $(SUBDIR)
-	$$(M) $$(SRC_PATH)/ffbuild/pkgconfig_generate.sh $(NAME) "$(DESC)"
+	$$(M)sh $$(SRC_PATH)/ffbuild/pkgconfig_generate.sh $(NAME) "$(DESC)"
 
 $(SUBDIR)lib$(NAME).ver: $(SUBDIR)lib$(NAME).v $(OBJS)
 	$$(M)sed 's/MAJOR/$(lib$(NAME)_VERSION_MAJOR)/' $$< | $(VERSION_SCRIPT_POSTPROCESS_CMD) > $$@
@@ -75,11 +75,12 @@ $(SUBDIR)$(SLIBNAME): $(SUBDIR)$(SLIBNAME_WITH_MAJOR)
 	$(Q)cd ./$(SUBDIR) && $(LN_S) $(SLIBNAME_WITH_MAJOR) $(SLIBNAME)
 
 $(SUBDIR)$(SLIBNAME_WITH_MAJOR): $(OBJS) $(SHLIBOBJS) $(SUBDIR)lib$(NAME).ver
-	$(SLIB_CREATE_DEF_CMD)
 ifeq ($(RESPONSE_FILES),yes)
-	$(Q)echo $$(filter %.o,$$^) > $$@.objs
+	$$(file >$$@.objs,$$(filter %.o,$$^))
+	$(SLIB_CREATE_DEF_CMD)
 	$$(call LINK,$$(call $(NAME)LINK_SO_ARGS) $$(LD_O) @$$@.objs $$(call $(NAME)LINK_EXTRA))
 else
+	$(SLIB_CREATE_DEF_CMD)
 	$$(call LINK,$$(call $(NAME)LINK_SO_ARGS) $$(LD_O) $$(filter %.o,$$^) $$(call $(NAME)LINK_EXTRA))
 endif
 	$(SLIB_EXTRA_CMD)
