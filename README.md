@@ -68,6 +68,7 @@ To build this version from source, follow these steps:
 
 1. Open Visual Studio Tools\VC\x64 Native Tools Command Prompt
 2. Launch the **MSYS2 UCRT64** shell:
+   - Edit msys2_shell.cmd enable(uncomment) set MSYS2_PATH_TYPE=inherit
    - C:\msys64\msys2_shell.cmd -ucrt64
 3. Install requirements:
    - pacman -S nasm
